@@ -90,6 +90,9 @@
                      * 'options'
                      */
                     onCustomBenchmarkSelect: "&",
+                    customBenchmark: "=",
+                    clientBenchmarkTypeahead: "&",
+                    onClientBenchmarkSelect: "&",
                     cdxIndexOptions: "=",
                     onCdxIndexSelect: "&",
                     /**
@@ -104,13 +107,15 @@
                     onDateChange: "&",
                     showMarketIndicators: '=?',
                     showBenchmark: '=?',
-                    showCdxIndex: '=?'
+                    showClientBenchmark: '=?',
+                    showCdxIndex: '='
                 },
                 link: function (scope, elem, attrs) {
 
                     scope.id = _.uniqueId();
                     scope.alerts = {
                         customBenchmark: {active: false, messages: []},
+                        clientBenchmark: {active: false, messages: []},
                         generalWarning: {active: false, message: ""},
                         dateChangeError: {active: false, message: ""},
                         cdxIndex: {active: false, messages: []}
@@ -140,10 +145,12 @@
                         },
                         marketIndices: [],
                         customBenchmarks: [],
+                        clientBenchmark: [],
                         cdxIndex: [],
                         menuDisplays: {
                             securityControl: false,
                             benchmarkControl: false,
+                            clientBenchmarkControl: false,
                             indicatorControl: false,
                             cdxControl: false,
                             comparisonControl: false,
@@ -160,6 +167,44 @@
                      * define the API exposed to the parent component
                      */
                     scope.apiHandle.api = {
+                        clearCurveStates: function(){
+                            if(!_.isEmpty(scope.states.clientBenchmark)){
+                                _.each(scope.states.clientBenchmark, function(clientBenchmark){
+                                    var id = ['ClientBenchmark',clientBenchmark.indexTicker].join(".");
+                                    dsc.removeSeriesById(id, scope);
+                                });
+                                scope.states.clientBenchmark = [];
+                            }
+                            if(!_.isEmpty(scope.states.customBenchmarks)){
+                                _.each(scope.states.customBenchmarks, function(customBenchmark){
+                                    var id = ['CustomBenchmark',
+                                        customBenchmark.sector,
+                                        customBenchmark.rating,
+                                        customBenchmark.wal,
+                                        customBenchmark.analytic.tag].join(".");
+                                    dsc.removeSeriesById(id, scope);
+                                });
+                                scope.states.customBenchmarks = [];
+                            }
+                            if(!_.isEmpty(scope.states.cdxIndex)){
+                                _.each(scope.states.cdxIndex, function(cdxIndex){
+                                    var id = ['CdxIndex',
+                                        cdxIndex.contractType,
+                                        cdxIndex.contractTenor,
+                                        cdxIndex.otrFlag].join(".");
+                                    dsc.removeSeriesById(id, scope);
+                                });
+                                scope.states.cdxIndex = [];
+                            }
+                            if(!_.isEmpty(scope.states.marketIndices)){
+                                _.each(scope.states.marketIndices, function(marketIndex){
+                                    var id = marketIndex.tag;
+                                    dsc.removeSeriesById(id, scope);
+                                });
+                                scope.states.marketIndices = [];
+                            }
+
+                        },
                         /**
                          * add a security
                          * @param security
@@ -198,14 +243,24 @@
                             _.chain(scope.states.chart.series).filter(function (series) {
                                 return series && series.options.securityId == id;
                             }).each(function (series) {
-                                const yAxis = series.yAxis;
-                                series.remove();
-                                dsc.afterSeriesRemove(yAxis, id, scope);
+                                if(series.yAxis){
+                                    const yAxis = series.yAxis;
+                                    series.remove();
+                                    dsc.afterSeriesRemove(yAxis, id, scope);
+                                }
+
                             });
 
                             // fire callback if provided
                             if (_.isFunction(scope.onSecurityRemove))
                                 scope.onSecurityRemove({id: id});
+
+                            if(scope.states.securityAttrMap.length == 0){
+                                scope.states.chart.update({
+                                    navigator: {enabled: false}
+                                });
+                            }
+
                         },
                         addMarketIndicator: function ($item) {
                             scope.isProcessing = true;
@@ -217,7 +272,8 @@
                             });
 
                             function processSeries(series) {
-                                series.id = $item.tag;
+                                //Checking if tag exists for the item. If not, assume it's an id itself.
+                                series.id = $item.tag ? $item.tag : $item;
 
                                 /**
                                  * instruction on how to properly remove the series
@@ -264,11 +320,12 @@
                             }
 
                             function processSeries(series) {
-                                series.id = ['CustomBenchmark',
-                                    customBenchmark.sector,
-                                    customBenchmark.rating,
-                                    customBenchmark.wal,
-                                    customBenchmark.analytic.tag].join(".");
+                                if(series.data){
+                                    series.id = ['CustomBenchmark',
+                                        customBenchmark.sector,
+                                        customBenchmark.rating,
+                                        customBenchmark.wal,
+                                        customBenchmark.analytic.tag].join(".");
 
 
                                 /**
@@ -279,14 +336,15 @@
                                     dsc.removeSeriesById(series.id, scope);
                                 };
 
-                                // Update the data it if it already exists
-                                if (scope.states.chart.get(series.id))
-                                    scope.states.chart.get(series.id).setData(series.data);
-                                else
-                                    scope.addSeries(series);
-                                scope.isProcessing = false;
-                                if (scope.states.customBenchmarks.indexOf(customBenchmark) === -1)
-                                    scope.states.customBenchmarks.push(customBenchmark);
+                                    // Update the data it if it already exists
+                                    if (scope.states.chart.get(series.id))
+                                        scope.states.chart.get(series.id).setData(series.data);
+                                    else
+                                        scope.addSeries(series);
+                                    scope.isProcessing = false;
+                                    if (scope.states.customBenchmarks.indexOf(customBenchmark) === -1)
+                                        scope.states.customBenchmarks.push(customBenchmark);
+                                }
                             }
 
                             validate(customBenchmark, result);
@@ -298,6 +356,66 @@
                             else {
                                 scope.alerts.customBenchmark.active = false;
                                 scope.toggleSlide(false, 'benchmark-control')
+                            }
+
+                            scope.isProcessing = true;
+                            if (result && angular.isFunction(result.then))
+                                result.then(function (series) {
+                                    processSeries(series.status ? series.data : series);
+                                }, function () {
+                                    scope.isProcessing = false;
+                                });
+                            else
+                                processSeries(result);
+
+                            return true;
+                        },
+                        addClientBenchmark: function (clientBenchmark) {
+                            scope.alerts.clientBenchmark.messages = [];
+
+                            const result = scope.onClientBenchmarkSelect({
+                                clientBenchmark: clientBenchmark,
+                                options: {dateRange: scope.states.dateRange},
+                                tag: scope.defaultSecurityAttribute
+                            });
+
+                            function validate(clientBenchmark, result) {
+                                if (!clientBenchmark.indexTicker)
+                                    scope.alerts.clientBenchmark.messages = ["Input is missing!"];
+                                else if (result.errors)
+                                    scope.alerts.clientBenchmark.messages = result.errors;
+                            }
+
+                            function processSeries(series) {
+                                series.id = ['ClientBenchmark',clientBenchmark.indexTicker].join(".");
+
+                                /**
+                                 * instruction on how to properly remove the series
+                                 */
+                                series.onRemove = function () {
+                                    scope.states.clientBenchmark.splice(scope.states.clientBenchmark.indexOf(clientBenchmark), 1);
+                                    dsc.removeSeriesById(series.id, scope);
+                                };
+
+                                // Update the data it if it already exists
+                                if (scope.states.chart.get(series.id))
+                                    scope.states.chart.get(series.id).setData(series.data);
+                                else
+                                    scope.addSeries(series);
+                                scope.isProcessing = false;
+                                if (scope.states.clientBenchmark.indexOf(clientBenchmark) === -1)
+                                    scope.states.clientBenchmark.push(clientBenchmark);
+                            }
+
+                            validate(clientBenchmark, result);
+
+                            if (scope.alerts.clientBenchmark.messages.length > 0) {
+                                scope.alerts.clientBenchmark.active = true;
+                                return false;
+                            }
+                            else {
+                                scope.alerts.clientBenchmark.active = false;
+                                scope.toggleSlide(false, 'client-benchmark-control')
                             }
 
                             scope.isProcessing = true;
@@ -414,15 +532,33 @@
                             _.each(scope.states.customBenchmarks, scope.apiHandle.api.addCustomBenchmark);
                             //Update all cdx indices
                             _.each(scope.states.cdxIndex, scope.apiHandle.api.addCdxIndex);
+                            //Update all client benchmarks
+                            _.each(scope.states.clientBenchmark, scope.apiHandle.api.addClientBenchmark);
                             if (scope.states.menuDisplays.dateControl)
                                 scope.toggleSlide(!scope.states.menuDisplays.dateControl, 'date-control');
                             scope.states.menuDisplays.dateControl = false;
                         },
                         changeTitle: function(title){
-                            scope.states.chart.setTitle({text: title});
+                            if(scope.states && scope.states.chart){
+                                scope.states.chart.setTitle({text: title});
+                                if(scope.states.chart.yAxis.length > 0){
+                                    scope.states.chart.yAxis[0].update({
+                                        title: {
+                                            text: scope.defaultSecurityAttribute.unit
+                                        }
+                                    });
+                                }
+                            }
                         },
                         changeDefaultSecurityAttribute: function(newAttr){
                             scope.onDefaultAttributeChange({newAttr: newAttr});
+                            if(newAttr.tag.indexOf('rating') >= 0 && scope.states.chart.yAxis && scope.states.chart.yAxis.length > 0)
+                                scope.states.chart.yAxis[0].update({
+                                    floor: newAttr.yAxis ? newAttr.yAxis.floor : undefined,
+                                    ceiling: newAttr.yAxis ? newAttr.yAxis.ceiling : undefined,
+                                    startOnTick: false,
+                                    endOnTick: false
+                                }, true);
                         },
                         /**
                          * Sets size to be exactly the dimensions of the container
@@ -439,12 +575,15 @@
                             renderTo: "enriched-highstock-" + scope.id,
                             type: "spline",
                             marginTop: 30,
-                            zoomType: 'x',
+                            zoomType: 'none',
                             resetZoomButton: {
                                 theme: {
                                     display: 'none'
                                 }
                             }
+                        },
+                        navigator: {
+                            enabled: true
                         },
                         title: {
                             text: scope.title || "Untitled",
@@ -475,36 +614,53 @@
                             shared: true
                         },
                         xAxis: {
-                            type: "datetime",
-                            events: {
-                                // If we zoom in on the chart, change the date range to those dates
-                                afterSetExtremes: function (event) {
-                                    if (this.getExtremes().dataMin < event.min || this.getExtremes().dataMax > event.max) {
-                                        scope.apiHandle.api.changeDateRange(event.min, event.max);
-                                        this.chart.zoomOut();
-                                        // Since this is unrelated to angular, we need run a digest to apply bindings
-                                        scope.$apply(function(){
-                                            scope.states.selectedTimePeriod = null;
-                                        });
-                                    }
-                                }
-                            }
+                            type: "datetime"
+                            // events: {
+                            //     // If we zoom in on the chart, change the date range to those dates
+                            //     afterSetExtremes: function (event) {
+                            //         if (this.getExtremes().dataMin < event.min || this.getExtremes().dataMax > event.max) {
+                            //             scope.apiHandle.api.changeDateRange(event.min, event.max);
+                            //             this.chart.zoomOut();
+                            //             // Since this is unrelated to angular, we need run a digest to apply bindings
+                            //             scope.$apply(function(){
+                            //              scope.states.selectedTimePeriod = null;
+                            //             });
+                            //         }
+                            //     }
+                            // }
                         },
                         yAxis: {
+                            labels: {
+                                formatter: function () {
+                                    if(scope.defaultSecurityAttribute.numToRating &&
+                                        scope.defaultSecurityAttribute.numToRating[scope.defaultSecurityAttribute.tag] &&
+                                        scope.defaultSecurityAttribute.numToRating[scope.defaultSecurityAttribute.tag][this.value] !== null &&
+                                        scope.defaultSecurityAttribute.numToRating[scope.defaultSecurityAttribute.tag][this.value] !== undefined)
+                                        return scope.defaultSecurityAttribute.numToRating[scope.defaultSecurityAttribute.tag][this.value];
+                                    else if(scope.defaultSecurityAttribute.numToRating &&
+                                        scope.defaultSecurityAttribute.numToRating[scope.defaultSecurityAttribute.tag])
+                                        return null;
+                                    return this.value;
+                                }
+                            },
                             title: {
-                                text: scope.defaultSecurityAttribute.label,
+                                text: scope.defaultSecurityAttribute.unit || scope.defaultSecurityAttribute.label,
                                 events: {
                                     click: function (event) {
                                         dsc.onAxisClick.call(this, event, scope);
                                     }
                                 }
                             },
-                            axisType: scope.defaultSecurityAttribute.label,
+                            axisType: scope.defaultSecurityAttribute.unit || scope.defaultSecurityAttribute.label,
                             id: _.uniqueId("yAxis")
                         },
                         legend: {
                             useHTML: true
                         },
+                        floor: scope.defaultSecurityAttribute.yAxis ? scope.defaultSecurityAttribute.yAxis.floor : undefined,
+                        ceiling: scope.defaultSecurityAttribute.yAxis ? scope.defaultSecurityAttribute.yAxis.ceiling : undefined,
+                        startOnTick: scope.defaultSecurityAttribute.yAxis ? false : true,
+                        endOnTick: scope.defaultSecurityAttribute.yAxis ? false : true,
                         series: [],
                         credits: {enabled: false}
                     }, scope.highstockOptions);
@@ -526,6 +682,9 @@
                                 name: origSeries.name + " " + numDays + " Day SMA",
                                 axisType: origSeries.options.axisType,
                                 data: xy,
+                                color: origSeries.color,
+                                type: 'line',
+                                dashStyle: 'dash',
                                 securityId: origSeries.options.securityId || null
                             };
                         },
@@ -547,7 +706,8 @@
                                 axisType: origSeries.options.axisType + " Basis",
                                 securityId: origSeries.options.securityId || null,
                                 data: data,
-                                type: 'areaspline'
+                                type: 'areaspline',
+                                color: origSeries.color
                             }
                         }
                     };
@@ -581,7 +741,13 @@
                         function processSeries(series) {
                             series.securityId = securityAttrPair[0].id;
                             series.id = dsc.generateSeriesID(securityAttrPair[0], $item);
+                            var chosenSecurityAttrPair = _.filter(securityAttrPair[1], function(security){
+                                if(security.unit === series.axisType){return security}});
+                            if(chosenSecurityAttrPair.length > 0 && chosenSecurityAttrPair[0].numToRating!==undefined){
+                                series.numToRating = chosenSecurityAttrPair[0].numToRating;
+                            }
                             series.axisType = $item.unit || $item.label;
+                            series.tag = $item.tag;
                             series.onRemove = function () {
                                 scope.removeAttr($item, securityAttrPair);
                             };
@@ -710,13 +876,14 @@
                             /**
                              * add a new axis if we cannot find a preferred series
                              */
-                            dsc.addAxisToChart(chart, seriesOption.axisType || seriesOption.name, scope, seriesOption.axisType, seriesOption.subType);
+                            dsc.addAxisToChart(chart, seriesOption.axisType || seriesOption.name, scope, seriesOption.axisType, seriesOption.tag);
                             seriesOption.yAxis = chart.yAxis.length - 1;
                         }
                         else
                             seriesOption.yAxis = preferredYAxis;
 
                         chart.addSeries(seriesOption);
+                        chart.update({navigator: {enabled: true}});
                         dsc.attachLegendEventHandlers(chart.get(seriesOption.id), scope);
                     };
 
@@ -762,17 +929,32 @@
                         if (window.navigator.msSaveBlob)
                             window.navigator.msSaveBlob(new Blob([html]), "time-series-export.xls");
                         else
-                            window.open('data:application/vnd.ms-excel,' + encodeURIComponent(html));
+                            // window.open('data:application/vnd.ms-excel,' + encodeURIComponent(html));
+                            saveAs(new Blob([html],{type: 'data:application/vnd.ms-excel;charset=utf-8'}),'time-series-export.xls');
                     };
 
                     /**
                      * Export the image of the chart to a PDF
                      */
                     scope.exportPDF = function(){
-                        scope.states.chart.exportChart({
+                        var svg = scope.states.chart.getSVGForExport({
                             type: 'application/pdf',
                             filename: 'ts-chart-export'
                         });
+                        var canvas = document.createElement('canvas');
+                        canvg(canvas, svg);
+                        var imgData = canvas.toDataURL('image/jpeg');
+                        var doc = new jsPDF('l', 'pt', 'letter');
+                        var width = doc.internal.pageSize.width;
+                        var height = doc.internal.pageSize.height;
+                        doc.addImage(imgData,'JPEG',0,0,width,height);
+                        doc.output('save','ts-chart-export.pdf');
+
+                        // scope.states.chart.exportChart({
+                        //     type: 'application/pdf',
+                        //     filename: 'ts-chart-export'
+                        // });
+
                     };
 
                     /**
@@ -896,7 +1078,7 @@
         // turn the lookup map into HTML
         const body =  _.map(domain, function (x) {
             return "<tr>" +
-                "<td style='background-color: #999999'>" + (zDataExists ? moment(x).format('ddd, MMM DD YYYY, h:mm:ss A'):moment(x).format("YYYY-MM-DD")) + "</td>" +
+                "<td style='background-color: #999999'>" + (zDataExists ? moment.utc(x).format('ddd, MMM DD YYYY, h:mm:ss A'):moment.utc(x).format("YYYY-MM-DD")) + "</td>" +
                 _.map(matrix, function (col) {
                     if(zDataExists){
                         return "<td>" + (col[x] && _.isArray(col[x]) && col[x][0]!== undefined && col[x][0] !== 'undefined' ? col[x][0] : 0) + "</td>" +
@@ -933,6 +1115,10 @@
     root.dsc.resolvePreferredYAxis = function (chart, seriesOption) {
         if (!seriesOption.axisType)
             return chart.yAxis.length === 0 ? -1 : 0;
+        //TODO: this is too hacky. Make this generic.
+        if(seriesOption.axisType === "Index Level"){
+            return -1;
+        }
         return _.findIndex(chart.yAxis, function (axis) {
             return _.reduce(axis.series, function(sum, ser){
                 return sum && ser.options.axisType === seriesOption.axisType;
@@ -949,19 +1135,36 @@
      * @param name the name of the axis
      * @param scope the scope object (we need this for the axis click event handler)
      * @param axisType a member of the axisType enum
+     * @param tag colTag to get the numToRating map
      * @return {string}
      */
-    root.dsc.addAxisToChart = function (chart, name, scope, axisType) {
+    root.dsc.addAxisToChart = function (chart, name, scope, axisType, tag) {
+        var tag = tag || null;
         const axisId = _.uniqueId("yAxis");
         chart.addAxis({
+            labels: {
+                formatter: function () {
+                    if(scope.defaultSecurityAttribute.numToRating && scope.defaultSecurityAttribute.numToRating[tag] &&
+                        scope.defaultSecurityAttribute.numToRating[tag][this.value] !== null &&
+                        scope.defaultSecurityAttribute.numToRating[tag][this.value] !== undefined)
+                        return scope.defaultSecurityAttribute.numToRating[tag][this.value];
+                    else if(scope.defaultSecurityAttribute.numToRating && scope.defaultSecurityAttribute.numToRating[tag])
+                        return null;
+                    return this.value;
+                }
+            },
             title: {
-                text: name,
+                text: axisType,
                 events: {
                     click: function (event) {
                         dsc.onAxisClick.call(this, event, scope);
                     }
                 }
             },
+            floor: scope.defaultSecurityAttribute.yAxis ? scope.defaultSecurityAttribute.yAxis.floor : undefined,
+            ceiling: scope.defaultSecurityAttribute.yAxis ? scope.defaultSecurityAttribute.yAxis.ceiling : undefined,
+            startOnTick: scope.defaultSecurityAttribute.yAxis ? false : true,
+            endOnTick: scope.defaultSecurityAttribute.yAxis ? false : true,
             axisType: axisType,
             opposite: chart.options.yAxis.length % 2 == 1,      //check for only the yAxis. xAxis is always datetime.
             id: axisId
@@ -1050,6 +1253,7 @@
      */
     root.dsc.showCtxMenu = function ($ctxMenu, event) {
         $ctxMenu.show();
+        //Comment out the following line when MenuBuilder - triggerSeriesContextMenu is changed.
         const $rootDiv = $('div.root');
 
         const ctnRight = $rootDiv.position().left + $rootDiv.width();
@@ -1173,13 +1377,15 @@
 
         const chart = scope.states.chart;
         const series = chart.get(id);
-        const yAxis = series.yAxis;
-        const securityId = series.options.securityId;
+        if(series){
+            const yAxis = series.yAxis;
+            const securityId = series.options.securityId;
 
-        if (angular.isFunction(series.remove))
-            series.remove();
+            if (angular.isFunction(series.remove))
+                series.remove();
 
-        dsc.afterSeriesRemove(yAxis, securityId, scope);
+            dsc.afterSeriesRemove(yAxis, securityId, scope);
+        }
     };
 
 
@@ -1196,6 +1402,7 @@
                 nums.splice(0, 1);  // remove the first element of the array
             var sum = 0;
             for (var i in nums)
+                if(!isNaN(i))     //This checks if i gets value fastloopAsc and fastloop; filters
                 sum += nums[i];
             var n = period;
             if (nums.length < period)
@@ -1248,6 +1455,10 @@
         _.each(dsc.buildMenuItems(args), function (menuItem) {
             $ctxMenu.children(".dropdown-menu").append(menuItem);
         });
+        // TODO the following three lines were added to anchor context menu to text
+        // var legendClicked = args.series.userOptions.name;
+        // var parentLegend = $(args.series.chart.container).find("div.highcharts-legend-item:contains('"+legendClicked+"')")[0];
+        // parentLegend.appendChild($ctxMenu[0]);
         dsc.showCtxMenu($ctxMenu, event);
         return false;
     };
@@ -1399,4 +1610,4 @@
     };
 
 }());
-angular.module("decorated-stock-chart").run(["$templateCache", function($templateCache) {$templateCache.put("DecoratedStockChart.html","<div class=\"root\" style=\"position: relative;height:100%\">\r\n    <div class=\"control flex-main-container\"\r\n         ng-init=\"showSecurityControl = false; showIndicatorControl = false; showBenchmarkControl = false;\">\r\n        <span class=\"flex-sub-container-left\">\r\n            <!-- security & attributes selection -->\r\n            <span dsc-click-outside dsc-open-state=\"states.menuDisplays.securityControl\"\r\n                  dsc-close-callback=\"toggleSlide(!states.menuDisplays.securityControl, \'security-control\')\">\r\n                <span class=\"restrict-dropdown-menu\" >\r\n                    <input type=\"text\" ng-model=\"defaultSecurityAttribute\" class=\"form-control\" ng-hide=\"multipleAttributesExist\"\r\n                           style=\"width: 12em; display: inline; height:25px;\"\r\n                           typeahead=\"attr as attr.label for attr in availableSecurityAttributes | filter:$viewValue:$emptyOrMatch | orderBy:\'label.toString()\'\"\r\n                           typeahead-on-select=\"apiHandle.api.changeDefaultSecurityAttribute($item)\"\r\n                           typeahead-focus\r\n                           typeahead-select-on-blur=\"true\"/>\r\n                    <input id=\"multipleLabelInput\" type=\"text\" ng-show=\"multipleAttributesExist\" class=\"form-control\"\r\n                           style=\"width: 12em; display: inline; height:25px;\" placeholder=\"Multiple\" disabled=\"true\"\r\n                           />\r\n                </span>\r\n                <a><i ng-click=\"toggleSlide(!states.menuDisplays.securityControl, \'security-control\')\"\r\n                      class=\"fa clickable\"\r\n                      ng-class=\"{\'fa-chevron-up\': states.menuDisplays.securityControl, \'fa-chevron-down\': !states.menuDisplays.securityControl}\"></i></a>\r\n                <div class=\"security-control floating-form\" style=\"display: none;top:35px;left:0;\">\r\n                    <div ng-show=\"states.securityAttrMap.length === 0\">\r\n                        <h5>No Security Selected</h5>\r\n                    </div>\r\n                    <div class=\"flex-container\">\r\n                        <span class=\"wrappable-flex-item\" ng-repeat=\"securityAttrPair in states.securityAttrMap\">\r\n                            <!-- selected attributes display -->\r\n                            <span class=\"label label-success\">{{securityAttrPair[0].label}} | <i class=\"fa fa-remove clickable\"\r\n                                                                                                 ng-click=\"apiHandle.api.removeSecurity(securityAttrPair[0].id)\"></i></span>\r\n                            <span class=\"label label-primary\" ng-repeat=\"attr in securityAttrPair[1]\">\r\n                                    {{attr.label}} | <i class=\"fa fa-remove clickable\"\r\n                                                        ng-click=\"removeAttr(attr, securityAttrPair)\"></i>\r\n                            </span>\r\n                            <!-- input to select more attributes-->\r\n                            &nbsp;\r\n                            <input type=\"text\"\r\n                                   placeholder=\"+ Attribute\"\r\n                                   ng-model=\"selected\"\r\n                                   typeahead=\"attr as attr.label for attr in availableSecurityAttributes | filter:$viewValue:$emptyOrMatch | orderBy:\'label.toString()\'\"\r\n                                   class=\"form-control\"\r\n                                   style=\"width: 8em; display: inline;\"\r\n                                   typeahead-on-select=\"addAttr($item, securityAttrPair); selected = \'\'\"\r\n                                   typeahead-focus>\r\n\r\n                        </span>\r\n                    </div>\r\n                </div>\r\n            </span>\r\n            <!-- TODO implement these date functionalities -->\r\n            <span style=\"padding-left:25px;\">\r\n                <span class=\"clickable dsc-padding-right\" ng-repeat=\"period in customDefaultTimePeriods\" ng-click=\"selectTimePeriod(period)\"\r\n                      style=\"padding-right:5px;color:#005da0;\"\r\n                      ng-class=\"{\'dsc-underline\': period === states.selectedTimePeriod}\">{{period}}</span>\r\n                <span style=\"color:#005da0;overflow: hidden\"\r\n                      dsc-click-outside\r\n                      dsc-open-state=\"states.menuDisplays.dateControl\"\r\n                      dsc-close-callback=\"toggleSlide(!states.menuDisplays.dateControl, \'date-control\')\">\r\n                    <i class=\"fa fa-calendar clickable\" ng-click=\"toggleSlide(!states.menuDisplays.dateControl, \'date-control\');\r\n                             start = states.dateRange.start.getYYYYMMDD();\r\n                             end = states.dateRange.end.getYYYYMMDD()\"></i>\r\n                    <div class=\"date-control floating-form\" style=\"display: none;\">\r\n                        <alert ng-show=\"alerts.dateChangeError.active\" close=\"alerts.dateChangeError.active = false\" type=\"danger\" style=\"font-size: 12px;\">\r\n                            {{alerts.dateChangeError.message}}\r\n                            <br/>\r\n                            Format: YYYY-MM-DD\r\n                        </alert>\r\n                        <label>From&nbsp;</label>\r\n                        <div class=\"input-group limited-input\">\r\n                            <input type=\"text\" class=\"form-control\"\r\n                                   datepicker-popup\r\n                                   is-open=\"startDatePickerOpen\"\r\n                                   ng-model=\"start\"\r\n                                   close-text=\"Close\"/>\r\n                            <span class=\"input-group-btn\">\r\n                                <button type=\"button\" class=\"btn btn-default\" ng-click=\"startDatePickerOpen = !startDatePickerOpen\"><i class=\"fa fa-calendar\"></i></button>\r\n                            </span>\r\n                        </div>\r\n                        <label>To&nbsp;</label>\r\n                        <div class=\"input-group limited-input\">\r\n                            <input type=\"text\" class=\"form-control\"\r\n                                   datepicker-popup\r\n                                   is-open=\"endDatePickerOpen\"\r\n                                   ng-model=\"end\"\r\n                                   close-text=\"Close\"/>\r\n                            <span class=\"input-group-btn\">\r\n                                <button type=\"button\" class=\"btn btn-default\" ng-click=\"endDatePickerOpen = !endDatePickerOpen\"><i class=\"fa fa-calendar\"></i></button>\r\n                            </span>\r\n                        </div>\r\n                        <hr/>\r\n                        <button class=\"btn btn-success\"\r\n                                ng-click=\"alerts.dateChangeError.message = apiHandle.api.changeDateRange(start, end);\r\n                                          alerts.dateChangeError.message ? null : showDateControl = !showDateControl;\r\n                                          states.selectedTimePeriod = null;\">\r\n                            <i class=\"fa fa-play\"></i>\r\n                        </button>\r\n                    </div>\r\n                </span>\r\n            </span>\r\n        </span>\r\n        <span class=\"flex-sub-container-right\">\r\n\r\n            <span dsc-click-outside dsc-open-state=\"states.menuDisplays.comparisonControl\"\r\n                  dsc-close-callback=\"toggleSlide(!states.menuDisplays.comparisonControl,\'comparison-control\')\" style=\"padding-right:8px\">\r\n                <a class=\"clickable\" style=\"text-decoration:none\"\r\n                   ng-click=\"toggleSlide(!states.menuDisplays.comparisonControl,\'comparison-control\');selected=\'\';\">\r\n                    <span class=\"fake-anchor-tag\">Comparison</span>\r\n                    <i class=\"fa\" ng-class=\"{\'fa-chevron-up\': states.menuDisplays.comparisonControl, \'fa-chevron-down\': !states.menuDisplays.comparisonControl}\"></i>\r\n                </a>\r\n                <div class=\"comparison-control floating-form-comparison\" style=\"display: none;right:0\">\r\n                    <ul class=\"tab tab-style\">\r\n                    <li class=\"position-li-tab\" ng-show=\"showMarketIndicators\">\r\n                        <span dsc-click-outside dsc-open-state=\"states.menuDisplays.indicatorControl\"\r\n                              dsc-close-callback=\"toggleSlide(!states.menuDisplays.indicatorControl,\'indicator-control\')\">\r\n                <a class=\"clickable list-element-style\" style=\"text-decoration:none\"\r\n                   ng-click=\"toggleSlide(!states.menuDisplays.indicatorControl,\'indicator-control\');selected=\'\';\">\r\n                    <span class=\"fake-anchor-tag\">Market Indicators</span>\r\n                    <i class=\"fa\" ng-class=\"{\'fa-chevron-up\': states.menuDisplays.indicatorControl, \'fa-chevron-down\': !states.menuDisplays.indicatorControl}\"></i>\r\n                </a>\r\n                <div class=\"indicator-control floating-form\" style=\"display: none;width:250px;right:0\">\r\n                    <label>\r\n                        Search&nbsp;\r\n                    </label>\r\n                    <span class=\"restrict-dropdown-menu\">\r\n                        <input type=\"text\" placeholder=\"ex: Brent Crude, CDS...\" class=\"form-control\"\r\n                               ng-model=\"selected\"\r\n                               typeahead=\"attr.label for attr in marketIndexTypeahead({userInput: $viewValue}) | filter:$viewValue:$emptyOrMatch | orderBy:\'label.toString()\'\"\r\n                               typeahead-on-select=\"apiHandle.api.addMarketIndicator($item); selected = \'\';showIndicatorControl = false;\"\r\n                               typeahead-focus/>\r\n                    </span>\r\n                    <a class=\"clickable\" ng-if=\"showMoreMarketInfo\" ng-click=\"moreMarketInfoCallback()\">Show All</a>\r\n                </div>\r\n            </span>\r\n                    </li>\r\n                        <li class=\"position-li-tab\" ng-show=\"showBenchmark\">\r\n                            <span dsc-click-outside dsc-open-state=\"states.menuDisplays.benchmarkControl\"\r\n                                  dsc-close-callback=\"toggleSlide(!states.menuDisplays.benchmarkControl, \'benchmark-control\')\"\r\n                                  style=\"padding-right:10px\" ng-init=\"customBenchmark = {}\">\r\n                <a class=\"clickable list-element-style\" style=\"padding-left:5px;text-decoration:none;\"\r\n                   ng-click=\"toggleSlide(!states.menuDisplays.benchmarkControl, \'benchmark-control\');customBenchmark = {};\">\r\n                    <span class=\"fake-anchor-tag\">Benchmark</span>\r\n                    <i class=\"fa\" ng-class=\"{\'fa-chevron-up\': states.menuDisplays.benchmarkControl, \'fa-chevron-down\': !states.menuDisplays.benchmarkControl}\"></i>\r\n                </a>\r\n                <div class=\"benchmark-control floating-form\" style=\"display: none;right:0;width:220px\">\r\n                    <alert ng-show=\"alerts.customBenchmark.active\" close=\"alerts.customBenchmark.active = false\" type=\"danger\" style=\"font-size: 12px;\">\r\n                        There were problems with your input\r\n                        <br/><br/>\r\n                        <ul style=\"list-style:inside;padding-left:0;\">\r\n                            <li ng-repeat=\"message in alerts.customBenchmark.messages\">{{message}}</li>\r\n                        </ul>\r\n                    </alert>\r\n                    <label>\r\n                        Sector&nbsp;\r\n                        <span class=\"restrict-dropdown-menu-small\">\r\n                            <input type=\"text\" class=\"form-control length-md\"\r\n                                   ng-model=\"customBenchmark.sector\"\r\n                                   typeahead=\"sector for sector in customBenchmarkOptions.sectors | filter:$viewValue:$emptyOrMatch | orderBy:\'toString()\'\"\r\n                                   typeahead-focus\r\n                                   typeahead-select-on-blur=\"true\"/>\r\n                        </span>\r\n                    </label>\r\n                    <label>\r\n                        Rating&nbsp;\r\n                        <span class=\"restrict-dropdown-menu-small\">\r\n                            <input type=\"text\" class=\"form-control length-md\"\r\n                                   ng-model=\"customBenchmark.rating\"\r\n                                   typeahead=\"rating for rating in customBenchmarkOptions.ratings | filter:$viewValue:$emptyOrMatch | orderBy:\'toString()\'\"\r\n                                   typeahead-focus\r\n                                   typeahead-select-on-blur=\"true\"/>\r\n                        </span>\r\n                    </label>\r\n                    <label>\r\n                        WAL&nbsp;\r\n                        <span class=\"restrict-dropdown-menu-small\">\r\n                            <input type=\"text\" class=\"form-control length-md\"\r\n                                   ng-model=\"customBenchmark.wal\"\r\n                                   typeahead=\"wal for wal in customBenchmarkOptions.wal | filter:$viewValue:$emptyOrMatch | orderBy:sortWalBuckets\"\r\n                                   typeahead-focus\r\n                                   typeahead-select-on-blur=\"true\"/>\r\n                        </span>\r\n                    </label>\r\n                    <label>\r\n                        Analytic&nbsp;\r\n                        <span class=\"restrict-dropdown-menu-small\">\r\n                            <input type=\"text\" class=\"form-control length-md\"\r\n                                   ng-model=\"customBenchmark.analytic\"\r\n                                   typeahead=\"attr as attr.label for attr in customBenchmarkOptions.analytics | filter:$viewValue:$emptyOrMatch | orderBy:\'label.toString()\'\"\r\n                                   typeahead-focus\r\n                                   typeahead-select-on-blur=\"true\"/>\r\n                        </span>\r\n                    </label>\r\n                    <label>\r\n                        Currency&nbsp;\r\n                        <span class=\"restrict-dropdown-menu-small\">\r\n                            <input type=\"text\" class=\"form-control length-md\" ng-disabled=\"true\" value=\"USD\"/>\r\n                        </span>\r\n                    </label>\r\n                    <br/>\r\n                    <button class=\"btn btn-success\" ng-click=\"apiHandle.api.addCustomBenchmark(customBenchmark)\"><i\r\n                            class=\"fa fa-play\"></i></button>\r\n                </div>\r\n            </span>\r\n                        </li>\r\n\r\n                        <li class=\"position-li-tab\" ng-show=\"showCdxIndex\">\r\n                            <span dsc-click-outside dsc-open-state=\"states.menuDisplays.cdxControl\"\r\n                                  dsc-close-callback=\"toggleSlide(!states.menuDisplays.cdxControl, \'cdx-control\')\"\r\n                                  style=\"padding-right:10px\" ng-init=\"cdxIndex = {}\">\r\n                <a class=\"clickable list-element-style\" style=\"padding-left:5px;text-decoration:none;\"\r\n                   ng-click=\"toggleSlide(!states.menuDisplays.cdxControl, \'cdx-control\');cdxIndex = {};\">\r\n                    <span class=\"fake-anchor-tag\">CDS Index</span>\r\n                    <i class=\"fa\" ng-class=\"{\'fa-chevron-up\': states.menuDisplays.cdxControl, \'fa-chevron-down\': !states.menuDisplays.cdxControl}\"></i>\r\n                </a>\r\n                <div class=\"cdx-control floating-form\" style=\"display: none;right:0;width:220px\">\r\n                    <alert ng-show=\"alerts.cdxIndex.active\" close=\"alerts.cdxIndex.active = false\" type=\"danger\" style=\"font-size: 12px;\">\r\n                        There were problems with your input\r\n                        <br/><br/>\r\n                        <ul style=\"list-style:inside;padding-left:0;\">\r\n                            <li ng-repeat=\"message in alerts.cdxIndex.messages\">{{message}}</li>\r\n                        </ul>\r\n                    </alert>\r\n                    <label>\r\n                        Contract Type&nbsp;\r\n                        <span class=\"restrict-dropdown-menu-small\">\r\n                            <input type=\"text\" class=\"form-control length-md\"\r\n                                   ng-model=\"cdxIndex.contractType\"\r\n                                   typeahead=\"contractType for contractType in cdxIndexOptions.contractTypes | filter:$viewValue:$emptyOrMatch | orderBy:\'toString()\'\"\r\n                                   typeahead-focus\r\n                                   typeahead-select-on-blur=\"true\"/>\r\n                        </span>\r\n                    </label>\r\n                    <label>\r\n                        Contract Tenor&nbsp;\r\n                        <span class=\"restrict-dropdown-menu-small\">\r\n                            <input type=\"text\" class=\"form-control length-md\"\r\n                                   ng-model=\"cdxIndex.contractTenor\"\r\n                                   typeahead=\"contractTenor for contractTenor in cdxIndexOptions.contractTenors | filter:$viewValue:$emptyOrMatch\"\r\n                                   typeahead-focus\r\n                                   typeahead-select-on-blur=\"true\"/>\r\n                        </span>\r\n                    </label>\r\n                    <label>\r\n                        On-the-run/Off-the-run&nbsp;\r\n                        <span class=\"restrict-dropdown-menu-small\">\r\n                            <input type=\"text\" class=\"form-control length-md\"\r\n                                   ng-model=\"cdxIndex.otrFlag\"\r\n                                   typeahead=\"otrFlag for otrFlag in cdxIndexOptions.otrFlags | filter:$viewValue:$emptyOrMatch \"\r\n                                   typeahead-focus\r\n                                   typeahead-select-on-blur=\"true\"/>\r\n                        </span>\r\n                    </label>\r\n                    <br/>\r\n                    <button class=\"btn btn-success\" ng-click=\"apiHandle.api.addCdxIndex(cdxIndex)\"><i\r\n                            class=\"fa fa-play\"></i></button>\r\n                </div>\r\n            </span>\r\n                        </li>\r\n\r\n                    </ul>\r\n                </div>\r\n            </span>\r\n\r\n\r\n            <!--<span dsc-click-outside dsc-open-state=\"states.menuDisplays.indicatorControl\"-->\r\n                  <!--dsc-close-callback=\"toggleSlide(!states.menuDisplays.indicatorControl,\'indicator-control\')\">-->\r\n                <!--<a class=\"clickable\" style=\"text-decoration:none\"-->\r\n                   <!--ng-click=\"toggleSlide(!states.menuDisplays.indicatorControl,\'indicator-control\');selected=\'\';\">-->\r\n                    <!--<span class=\"fake-anchor-tag\">Market Indicators</span>-->\r\n                    <!--<i class=\"fa\" ng-class=\"{\'fa-chevron-up\': states.menuDisplays.indicatorControl, \'fa-chevron-down\': !states.menuDisplays.indicatorControl}\"></i>-->\r\n                <!--</a>-->\r\n                <!--<div class=\"indicator-control floating-form\" style=\"display: none;width:250px;right:0\">-->\r\n                    <!--<label>-->\r\n                        <!--Search&nbsp;-->\r\n                    <!--</label>-->\r\n                    <!--<span class=\"restrict-dropdown-menu\">-->\r\n                        <!--<input type=\"text\" placeholder=\"ex: Brent Crude, CDS...\" class=\"form-control\"-->\r\n                                   <!--ng-model=\"selected\"-->\r\n                                   <!--typeahead=\"attr.label for attr in marketIndexTypeahead({userInput: $viewValue}) | filter:$viewValue:$emptyOrMatch | orderBy:\'label.toString()\'\"-->\r\n                                   <!--typeahead-on-select=\"apiHandle.api.addMarketIndicator($item); selected = \'\';showIndicatorControl = false;\"-->\r\n                                   <!--typeahead-focus/>-->\r\n                    <!--</span>-->\r\n                    <!--<a class=\"clickable\" ng-if=\"showMoreMarketInfo\" ng-click=\"moreMarketInfoCallback()\">Show All</a>-->\r\n                <!--</div>-->\r\n            <!--</span>-->\r\n            <!--<span dsc-click-outside dsc-open-state=\"states.menuDisplays.benchmarkControl\"-->\r\n                  <!--dsc-close-callback=\"toggleSlide(!states.menuDisplays.benchmarkControl, \'benchmark-control\')\"-->\r\n                    <!--style=\"padding-right:10px\" ng-init=\"customBenchmark = {}\">-->\r\n                <!--<a class=\"clickable\" style=\"padding-left:5px;text-decoration:none;\"-->\r\n                   <!--ng-click=\"toggleSlide(!states.menuDisplays.benchmarkControl, \'benchmark-control\');customBenchmark = {};\">-->\r\n                    <!--<span class=\"fake-anchor-tag\">Benchmark</span>-->\r\n                    <!--<i class=\"fa\" ng-class=\"{\'fa-chevron-up\': states.menuDisplays.benchmarkControl, \'fa-chevron-down\': !states.menuDisplays.benchmarkControl}\"></i>-->\r\n                <!--</a>-->\r\n                <!--<div class=\"benchmark-control floating-form\" style=\"display: none;right:0;width:220px\">-->\r\n                    <!--<alert ng-show=\"alerts.customBenchmark.active\" close=\"alerts.customBenchmark.active = false\" type=\"danger\" style=\"font-size: 12px;\">-->\r\n                        <!--There were problems with your input-->\r\n                        <!--<br/><br/>-->\r\n                        <!--<ul style=\"list-style:inside;padding-left:0;\">-->\r\n                            <!--<li ng-repeat=\"message in alerts.customBenchmark.messages\">{{message}}</li>-->\r\n                        <!--</ul>-->\r\n                    <!--</alert>-->\r\n                    <!--<label>-->\r\n                        <!--Sector&nbsp;-->\r\n                        <!--<span class=\"restrict-dropdown-menu-small\">-->\r\n                            <!--<input type=\"text\" class=\"form-control length-md\"-->\r\n                                   <!--ng-model=\"customBenchmark.sector\"-->\r\n                                   <!--typeahead=\"sector for sector in customBenchmarkOptions.sectors | filter:$viewValue:$emptyOrMatch | orderBy:\'toString()\'\"-->\r\n                                   <!--typeahead-focus-->\r\n                                   <!--typeahead-select-on-blur=\"true\"/>-->\r\n                        <!--</span>-->\r\n                    <!--</label>-->\r\n                    <!--<label>-->\r\n                        <!--Rating&nbsp;-->\r\n                        <!--<span class=\"restrict-dropdown-menu-small\">-->\r\n                            <!--<input type=\"text\" class=\"form-control length-md\"-->\r\n                                   <!--ng-model=\"customBenchmark.rating\"-->\r\n                                   <!--typeahead=\"rating for rating in customBenchmarkOptions.ratings | filter:$viewValue:$emptyOrMatch | orderBy:\'toString()\'\"-->\r\n                                   <!--typeahead-focus-->\r\n                                   <!--typeahead-select-on-blur=\"true\"/>-->\r\n                        <!--</span>-->\r\n                    <!--</label>-->\r\n                    <!--<label>-->\r\n                        <!--WAL&nbsp;-->\r\n                        <!--<span class=\"restrict-dropdown-menu-small\">-->\r\n                            <!--<input type=\"text\" class=\"form-control length-md\"-->\r\n                                   <!--ng-model=\"customBenchmark.wal\"-->\r\n                                   <!--typeahead=\"wal for wal in customBenchmarkOptions.wal | filter:$viewValue:$emptyOrMatch | orderBy:sortWalBuckets\"-->\r\n                                   <!--typeahead-focus-->\r\n                                   <!--typeahead-select-on-blur=\"true\"/>-->\r\n                        <!--</span>-->\r\n                    <!--</label>-->\r\n                    <!--<label>-->\r\n                        <!--Analytic&nbsp;-->\r\n                        <!--<span class=\"restrict-dropdown-menu-small\">-->\r\n                            <!--<input type=\"text\" class=\"form-control length-md\"-->\r\n                                   <!--ng-model=\"customBenchmark.analytic\"-->\r\n                                   <!--typeahead=\"attr as attr.label for attr in customBenchmarkOptions.analytics | filter:$viewValue:$emptyOrMatch | orderBy:\'label.toString()\'\"-->\r\n                                   <!--typeahead-focus-->\r\n                                   <!--typeahead-select-on-blur=\"true\"/>-->\r\n                        <!--</span>-->\r\n                    <!--</label>-->\r\n                    <!--<label>-->\r\n                        <!--Currency&nbsp;-->\r\n                        <!--<span class=\"restrict-dropdown-menu-small\">-->\r\n                            <!--<input type=\"text\" class=\"form-control length-md\" ng-disabled=\"true\" value=\"USD\"/>-->\r\n                        <!--</span>-->\r\n                    <!--</label>-->\r\n                    <!--<br/>-->\r\n                    <!--<button class=\"btn btn-success\" ng-click=\"apiHandle.api.addCustomBenchmark(customBenchmark)\"><i-->\r\n                            <!--class=\"fa fa-play\"></i></button>-->\r\n                <!--</div>-->\r\n            <!--</span>-->\r\n            <span>\r\n                <span class=\"clickable\" style=\"padding-right:5px;color:#005da0;\" ng-click=\"exportXLS()\"><i class=\"fa fa-file-excel-o\"></i></span>\r\n                <span class=\"clickable\" style=\"padding-right:5px;color:#005da0;\" ng-click=\"exportPDF()\"><i class=\"fa fa-file-pdf-o\"></i></span>\r\n                <span class=\"clickable\" style=\"padding-right:5px;color:#005da0;\" ng-repeat=\"customButton in customButtons\" ng-click=\"customButton.callback()\">\r\n                    <i class=\"fa\" ng-class=\"customButton.faClass\"></i>\r\n                </span>\r\n            </span>\r\n        </span>\r\n    </div>\r\n    <hr/>\r\n    <div class=\"chart-area-container\">\r\n        <i ng-show=\"isProcessing\" class=\"fa fa-spinner fa-spin fa-3x spinner\" style=\"position:absolute;top:0;left:0\"></i>\r\n        <!-- this is where the stock chart goes -->\r\n        <div ng-attr-id=\"{{\'enriched-highstock-\'+id}}\" style=\"width:100%;height:100%;\"></div>\r\n        <alert ng-show=\"alerts.generalWarning.active\" style=\"position:absolute;bottom:0;right:0;\"\r\n               close=\"alerts.generalWarning.active = false\" type=\"danger\">\r\n            {{alerts.generalWarning.message}}\r\n        </alert>\r\n    </div>\r\n</div>\r\n");}]);
+angular.module("decorated-stock-chart").run(["$templateCache", function($templateCache) {$templateCache.put("DecoratedStockChart.html","<div class=\"root\" style=\"position: relative;height:100%\">\r\n    <div class=\"control flex-main-container\"\r\n         ng-init=\"showSecurityControl = false; showIndicatorControl = false; showBenchmarkControl = false; showClientBenchmarkControl = false;\">\r\n        <span class=\"flex-sub-container-left\">\r\n            <!-- security & attributes selection -->\r\n            <span dsc-click-outside dsc-open-state=\"states.menuDisplays.securityControl\"\r\n                  dsc-close-callback=\"toggleSlide(!states.menuDisplays.securityControl, \'security-control\')\">\r\n                <span class=\"restrict-dropdown-menu\" >\r\n                    <input type=\"text\" ng-model=\"defaultSecurityAttribute\" class=\"form-control\" ng-hide=\"multipleAttributesExist\"\r\n                           style=\"width: 12em; display: inline; height:25px;\"\r\n                           typeahead=\"attr as attr.label for attr in availableSecurityAttributes | filter:$viewValue:$emptyOrMatch | orderBy:\'label.toString()\'\"\r\n                           typeahead-on-select=\"apiHandle.api.changeDefaultSecurityAttribute($item)\"\r\n                           typeahead-focus\r\n                           typeahead-select-on-blur=\"true\"/>\r\n                    <input id=\"multipleLabelInput\" type=\"text\" ng-show=\"multipleAttributesExist\" class=\"form-control\"\r\n                           style=\"width: 12em; display: inline; height:25px;\" placeholder=\"Multiple\" disabled=\"true\"\r\n                           />\r\n                </span>\r\n                <a><i ng-click=\"toggleSlide(!states.menuDisplays.securityControl, \'security-control\')\"\r\n                      class=\"fa clickable\"\r\n                      ng-class=\"{\'fa-chevron-up\': states.menuDisplays.securityControl, \'fa-chevron-down\': !states.menuDisplays.securityControl}\"></i></a>\r\n                <div class=\"security-control floating-form\" style=\"display: none;top:35px;left:0;\">\r\n                    <div ng-show=\"states.securityAttrMap.length === 0\">\r\n                        <h5>No Security Selected</h5>\r\n                    </div>\r\n                    <div class=\"flex-container\">\r\n                        <span class=\"wrappable-flex-item\" ng-repeat=\"securityAttrPair in states.securityAttrMap\">\r\n                            <!-- selected attributes display -->\r\n                            <span class=\"label label-success\">{{securityAttrPair[0].label}} | <i class=\"fa fa-remove clickable\"\r\n                                                                                                 ng-click=\"apiHandle.api.removeSecurity(securityAttrPair[0].id)\"></i></span>\r\n                            <span class=\"label label-primary\" ng-repeat=\"attr in securityAttrPair[1]\">\r\n                                    {{attr.label}} | <i class=\"fa fa-remove clickable\"\r\n                                                        ng-click=\"removeAttr(attr, securityAttrPair)\"></i>\r\n                            </span>\r\n                            <!-- input to select more attributes-->\r\n                            &nbsp;\r\n                            <input type=\"text\"\r\n                                   placeholder=\"+ Attribute\"\r\n                                   ng-model=\"selected\"\r\n                                   typeahead=\"attr as attr.label for attr in availableSecurityAttributes | filter:$viewValue:$emptyOrMatch | orderBy:\'label.toString()\'\"\r\n                                   class=\"form-control\"\r\n                                   style=\"width: 8em; display: inline;\"\r\n                                   typeahead-on-select=\"addAttr($item, securityAttrPair); selected = \'\'\"\r\n                                   typeahead-focus>\r\n\r\n                        </span>\r\n                    </div>\r\n                </div>\r\n            </span>\r\n            <!-- TODO implement these date functionalities -->\r\n            <span style=\"padding-left:25px;\">\r\n                <span class=\"clickable dsc-padding-right\" ng-repeat=\"period in customDefaultTimePeriods\" ng-click=\"selectTimePeriod(period)\"\r\n                      style=\"padding-right:5px;color:#005da0;\"\r\n                      ng-class=\"{\'dsc-underline\': period === states.selectedTimePeriod}\">{{period}}</span>\r\n                <span style=\"color:#005da0;overflow: hidden\"\r\n                      dsc-click-outside\r\n                      dsc-open-state=\"states.menuDisplays.dateControl\"\r\n                      dsc-close-callback=\"toggleSlide(!states.menuDisplays.dateControl, \'date-control\')\">\r\n                    <i class=\"fa fa-calendar clickable\" ng-click=\"toggleSlide(!states.menuDisplays.dateControl, \'date-control\');\r\n                             start = states.dateRange.start.getYYYYMMDD();\r\n                             end = states.dateRange.end.getYYYYMMDD()\"></i>\r\n                    <div class=\"date-control floating-form\" style=\"display: none;\">\r\n                        <alert ng-show=\"alerts.dateChangeError.active\" close=\"alerts.dateChangeError.active = false\" type=\"danger\" style=\"font-size: 12px;\">\r\n                            {{alerts.dateChangeError.message}}\r\n                            <br/>\r\n                            Format: YYYY-MM-DD\r\n                        </alert>\r\n                        <label>From&nbsp;</label>\r\n                        <div class=\"input-group limited-input\">\r\n                            <input type=\"text\" class=\"form-control\"\r\n                                   datepicker-popup\r\n                                   is-open=\"startDatePickerOpen\"\r\n                                   ng-model=\"start\"\r\n                                   close-text=\"Close\"/>\r\n                            <span class=\"input-group-btn\">\r\n                                <button type=\"button\" class=\"btn btn-default\" ng-click=\"startDatePickerOpen = !startDatePickerOpen\"><i class=\"fa fa-calendar\"></i></button>\r\n                            </span>\r\n                        </div>\r\n                        <label>To&nbsp;</label>\r\n                        <div class=\"input-group limited-input\">\r\n                            <input type=\"text\" class=\"form-control\"\r\n                                   datepicker-popup\r\n                                   is-open=\"endDatePickerOpen\"\r\n                                   ng-model=\"end\"\r\n                                   close-text=\"Close\"/>\r\n                            <span class=\"input-group-btn\">\r\n                                <button type=\"button\" class=\"btn btn-default\" ng-click=\"endDatePickerOpen = !endDatePickerOpen\"><i class=\"fa fa-calendar\"></i></button>\r\n                            </span>\r\n                        </div>\r\n                        <hr/>\r\n                        <button class=\"btn btn-success\"\r\n                                ng-click=\"alerts.dateChangeError.message = apiHandle.api.changeDateRange(start, end);\r\n                                          alerts.dateChangeError.message ? null : showDateControl = !showDateControl;\r\n                                          states.selectedTimePeriod = null;\">\r\n                            <i class=\"fa fa-play\"></i>\r\n                        </button>\r\n                    </div>\r\n                </span>\r\n            </span>\r\n        </span>\r\n        <span class=\"flex-sub-container-right\">\r\n\r\n            <span dsc-click-outside dsc-open-state=\"states.menuDisplays.comparisonControl\"\r\n                  dsc-close-callback=\"toggleSlide(!states.menuDisplays.comparisonControl,\'comparison-control\')\" style=\"padding-right:8px\">\r\n                <a class=\"clickable\" style=\"text-decoration:none\"\r\n                   ng-click=\"toggleSlide(!states.menuDisplays.comparisonControl,\'comparison-control\');selected=\'\';\">\r\n                    <span class=\"fake-anchor-tag\">Comparison</span>\r\n                    <i class=\"fa\" ng-class=\"{\'fa-chevron-up\': states.menuDisplays.comparisonControl, \'fa-chevron-down\': !states.menuDisplays.comparisonControl}\"></i>\r\n                </a>\r\n                <div class=\"comparison-control floating-form-comparison\" style=\"display: none;right:0\">\r\n                    <ul class=\"tab tab-style\">\r\n                        <li class=\"position-li-tab\" ng-show=\"showMarketIndicators\">\r\n                            <span dsc-click-outside dsc-open-state=\"states.menuDisplays.indicatorControl\"\r\n                                  dsc-close-callback=\"toggleSlide(!states.menuDisplays.indicatorControl,\'indicator-control\')\">\r\n                                    <a class=\"clickable list-element-style\" style=\"text-decoration:none\"\r\n                                    ng-click=\"toggleSlide(!states.menuDisplays.indicatorControl,\'indicator-control\');selected=\'\';\">\r\n                                        <span class=\"fake-anchor-tag\">Market Indicators</span>\r\n                                        <i class=\"fa\" ng-class=\"{\'fa-chevron-up\': states.menuDisplays.indicatorControl,\r\n                                        \'fa-chevron-down\': !states.menuDisplays.indicatorControl}\"></i>\r\n                                    </a>\r\n                                    <div class=\"indicator-control floating-form\" style=\"display: none;width:250px;right:0\">\r\n                                        <label>\r\n                                        Search&nbsp;\r\n                                        </label>\r\n                                        <span class=\"restrict-dropdown-menu\">\r\n                                        <input type=\"text\" placeholder=\"ex: Brent Crude, CDS...\" class=\"form-control\"\r\n                                            ng-model=\"selected\"\r\n                                            typeahead=\"attr.label for attr in marketIndexTypeahead({userInput: $viewValue}) | filter:$viewValue:$emptyOrMatch | orderBy:\'label.toString()\'\"\r\n                                            typeahead-on-select=\"apiHandle.api.addMarketIndicator($item); selected = \'\';showIndicatorControl = false;\"\r\n                                            typeahead-focus/>\r\n                                        </span>\r\n                                        <a class=\"clickable\" ng-if=\"showMoreMarketInfo\" ng-click=\"moreMarketInfoCallback()\">Show All</a>\r\n                                    </div>\r\n                            </span>\r\n                        </li>\r\n                        <li class=\"position-li-tab\" ng-show=\"showBenchmark\">\r\n                            <span dsc-click-outside dsc-open-state=\"states.menuDisplays.benchmarkControl\"\r\n                                  dsc-close-callback=\"toggleSlide(!states.menuDisplays.benchmarkControl, \'benchmark-control\')\"\r\n                                  style=\"padding-right:10px\" >\r\n                                    <a class=\"clickable list-element-style\" style=\"padding-left:5px;text-decoration:none;\"\r\n                                        ng-click=\"toggleSlide(!states.menuDisplays.benchmarkControl, \'benchmark-control\');\">\r\n                                        <span class=\"fake-anchor-tag\">Custom Benchmark</span>\r\n                                        <i class=\"fa\" ng-class=\"{\'fa-chevron-up\': states.menuDisplays.benchmarkControl,\r\n                                        \'fa-chevron-down\': !states.menuDisplays.benchmarkControl}\"></i>\r\n                                    </a>\r\n                                    <div class=\"benchmark-control floating-form\" style=\"display: none;right:0;width:220px\">\r\n                                        <alert ng-show=\"alerts.customBenchmark.active\" close=\"alerts.customBenchmark.active = false\" type=\"danger\" style=\"font-size: 12px;\">\r\n                                            There were problems with your input\r\n                                            <br/><br/>\r\n                                            <ul style=\"list-style:inside;padding-left:0;\">\r\n                                                <li ng-repeat=\"message in alerts.customBenchmark.messages\">{{message}}</li>\r\n                                            </ul>\r\n                                        </alert>\r\n                                        <label>\r\n                                            Sector&nbsp;\r\n                                            <span class=\"restrict-dropdown-menu-small\">\r\n                                                <input type=\"text\" class=\"form-control length-md\"\r\n                                                       ng-model=\"customBenchmark.sector\"\r\n                                                       typeahead=\"sector for sector in customBenchmarkOptions.sectors | filter:$viewValue:$emptyOrMatch | orderBy:\'toString()\'\"\r\n                                                       typeahead-focus\r\n                                                       typeahead-select-on-blur=\"true\"/>\r\n                                            </span>\r\n                                        </label>\r\n                                        <label>\r\n                                            Rating&nbsp;\r\n                                            <span class=\"restrict-dropdown-menu-small\">\r\n                                                <input type=\"text\" class=\"form-control length-md\"\r\n                                                       ng-model=\"customBenchmark.rating\"\r\n                                                       typeahead=\"rating for rating in customBenchmarkOptions.ratings | filter:$viewValue:$emptyOrMatch | orderBy:\'toString()\'\"\r\n                                                       typeahead-focus\r\n                                                       typeahead-select-on-blur=\"true\"/>\r\n                                            </span>\r\n                                        </label>\r\n                                        <label>\r\n                                            WAL&nbsp;\r\n                                            <span class=\"restrict-dropdown-menu-small\">\r\n                                                <input type=\"text\" class=\"form-control length-md\"\r\n                                                       ng-model=\"customBenchmark.wal\"\r\n                                                       typeahead=\"wal for wal in customBenchmarkOptions.wal | filter:$viewValue:$emptyOrMatch | orderBy:sortWalBuckets\"\r\n                                                       typeahead-focus\r\n                                                       typeahead-select-on-blur=\"true\"/>\r\n                                            </span>\r\n                                        </label>\r\n                                        <label>\r\n                                            Analytic&nbsp;\r\n                                            <span class=\"restrict-dropdown-menu-small\">\r\n                                                <input type=\"text\" class=\"form-control length-md\"\r\n                                                       ng-model=\"customBenchmark.analytic\"\r\n                                                       typeahead=\"attr as attr.label for attr in customBenchmarkOptions.analytics | filter:$viewValue:$emptyOrMatch | orderBy:\'label.toString()\'\"\r\n                                                       typeahead-focus\r\n                                                       typeahead-select-on-blur=\"true\"/>\r\n                                            </span>\r\n                                        </label>\r\n                                        <label>\r\n                                            Currency&nbsp;\r\n                                            <span class=\"restrict-dropdown-menu-small\">\r\n                                                <input type=\"text\" class=\"form-control length-md\" ng-disabled=\"true\" value=\"USD\"/>\r\n                                            </span>\r\n                                        </label>\r\n                                        <br/>\r\n                                        <button class=\"btn btn-success\" ng-click=\"apiHandle.api.addCustomBenchmark(customBenchmark)\"><i\r\n                                        class=\"fa fa-play\"></i></button>\r\n                                    </div>\r\n                            </span>\r\n                        </li>\r\n                        <li class=\"position-li-tab\" ng-show=\"showClientBenchmark\">\r\n                            <span dsc-click-outside dsc-open-state=\"states.menuDisplays.clientBenchmarkControl\"\r\n                                  dsc-close-callback=\"toggleSlide(!states.menuDisplays.clientBenchmarkControl, \'client-benchmark-control\')\"\r\n                                  style=\"padding-right:10px\" >\r\n                                    <a class=\"clickable list-element-style\" style=\"padding-left:5px;text-decoration:none;\"\r\n                                       ng-click=\"toggleSlide(!states.menuDisplays.clientBenchmarkControl, \'client-benchmark-control\');\">\r\n                                        <span class=\"fake-anchor-tag\">Index</span>\r\n                                        <i class=\"fa\" ng-class=\"{\'fa-chevron-up\': states.menuDisplays.clientBenchmarkControl,\r\n                                        \'fa-chevron-down\': !states.menuDisplays.clientBenchmarkControl}\"></i>\r\n                                    </a>\r\n                                    <div class=\"client-benchmark-control floating-form\" style=\"display: none;right:0;width:220px\">\r\n                                        <alert ng-show=\"alerts.clientBenchmark.active\" close=\"alerts.clientBenchmark.active = false\" type=\"danger\" style=\"font-size: 12px;\">\r\n                                            There were problems with your input\r\n                                            <br/><br/>\r\n                                            <ul style=\"list-style:inside;padding-left:0;\">\r\n                                                <li ng-repeat=\"message in alerts.clientBenchmark.messages\">{{message}}</li>\r\n                                            </ul>\r\n                                        </alert>\r\n                                        <label>\r\n                                        Search Index&nbsp;\r\n                                        </label>\r\n                                        <span class=\"restrict-dropdown-menu\">\r\n                                        <input type=\"text\" placeholder=\"Please enter an index\" class=\"form-control\"\r\n                                               ng-model=\"indexTicker\"\r\n                                               typeahead=\"index.indexTicker+\' | \'+index.fullName for index in clientBenchmarkTypeahead({userInput: $viewValue}) | filter:$viewValue:$emptyOrMatch | orderBy:\'indexTicker.toString()\'\"\r\n                                               typeahead-on-select=\"apiHandle.api.addClientBenchmark($item); indexTicker = \'\';showClientBenchmarkControl = false;\"/>\r\n                                        </span>\r\n                                        <br/>\r\n                                    </div>\r\n                            </span>\r\n                        </li>\r\n                        <li class=\"position-li-tab\" ng-show=\"showCdxIndex\">\r\n                            <span dsc-click-outside dsc-open-state=\"states.menuDisplays.cdxControl\"\r\n                                  dsc-close-callback=\"toggleSlide(!states.menuDisplays.cdxControl, \'cdx-control\')\"\r\n                                  style=\"padding-right:10px\" >\r\n                                    <a class=\"clickable list-element-style\" style=\"padding-left:5px;text-decoration:none;\"\r\n                                       ng-click=\"toggleSlide(!states.menuDisplays.cdxControl, \'cdx-control\');\">\r\n                                        <span class=\"fake-anchor-tag\">CDS Index</span>\r\n                                        <i class=\"fa\" ng-class=\"{\'fa-chevron-up\': states.menuDisplays.cdxControl, \'fa-chevron-down\': !states.menuDisplays.cdxControl}\"></i>\r\n                                    </a>\r\n                                    <div class=\"cdx-control floating-form\" style=\"display: none;right:0;width:220px\">\r\n                                        <alert ng-show=\"alerts.cdxIndex.active\" close=\"alerts.cdxIndex.active = false\" type=\"danger\" style=\"font-size: 12px;\">\r\n                                            There were problems with your input\r\n                                            <br/><br/>\r\n                                            <ul style=\"list-style:inside;padding-left:0;\">\r\n                                                <li ng-repeat=\"message in alerts.cdxIndex.messages\">{{message}}</li>\r\n                                            </ul>\r\n                                        </alert>\r\n                                        <label>\r\n                                            Contract Type&nbsp;\r\n                                            <span class=\"restrict-dropdown-menu-small\">\r\n                                                <input type=\"text\" class=\"form-control length-md\"\r\n                                                       ng-model=\"cdxIndex.contractType\"\r\n                                                       typeahead=\"contractType for contractType in cdxIndexOptions.contractTypes | filter:$viewValue:$emptyOrMatch | orderBy:\'toString()\'\"\r\n                                                       typeahead-focus\r\n                                                       typeahead-select-on-blur=\"true\"/>\r\n                                            </span>\r\n                                        </label>\r\n                                        <label>\r\n                                            Contract Tenor&nbsp;\r\n                                            <span class=\"restrict-dropdown-menu-small\">\r\n                                                <input type=\"text\" class=\"form-control length-md\"\r\n                                                       ng-model=\"cdxIndex.contractTenor\"\r\n                                                       typeahead=\"contractTenor for contractTenor in cdxIndexOptions.contractTenors | filter:$viewValue:$emptyOrMatch\"\r\n                                                       typeahead-focus\r\n                                                       typeahead-select-on-blur=\"true\"/>\r\n                                            </span>\r\n                                        </label>\r\n                                        <label>\r\n                                            On-the-run/Off-the-run&nbsp;\r\n                                            <span class=\"restrict-dropdown-menu-small\">\r\n                                                <input type=\"text\" class=\"form-control length-md\"\r\n                                                       ng-model=\"cdxIndex.otrFlag\"\r\n                                                       typeahead=\"otrFlag for otrFlag in cdxIndexOptions.otrFlags | filter:$viewValue:$emptyOrMatch \"\r\n                                                       typeahead-focus\r\n                                                       typeahead-select-on-blur=\"true\"/>\r\n                                            </span>\r\n                                        </label>\r\n                                        <br/>\r\n                                        <button class=\"btn btn-success\" ng-click=\"apiHandle.api.addCdxIndex(cdxIndex)\"><i\r\n                                                class=\"fa fa-play\"></i></button>\r\n                                    </div>\r\n                            </span>\r\n                        </li>\r\n\r\n                    </ul>\r\n                </div>\r\n            </span>\r\n\r\n\r\n            <!--<span dsc-click-outside dsc-open-state=\"states.menuDisplays.indicatorControl\"-->\r\n                  <!--dsc-close-callback=\"toggleSlide(!states.menuDisplays.indicatorControl,\'indicator-control\')\">-->\r\n                <!--<a class=\"clickable\" style=\"text-decoration:none\"-->\r\n                   <!--ng-click=\"toggleSlide(!states.menuDisplays.indicatorControl,\'indicator-control\');selected=\'\';\">-->\r\n                    <!--<span class=\"fake-anchor-tag\">Market Indicators</span>-->\r\n                    <!--<i class=\"fa\" ng-class=\"{\'fa-chevron-up\': states.menuDisplays.indicatorControl, \'fa-chevron-down\': !states.menuDisplays.indicatorControl}\"></i>-->\r\n                <!--</a>-->\r\n                <!--<div class=\"indicator-control floating-form\" style=\"display: none;width:250px;right:0\">-->\r\n                    <!--<label>-->\r\n                        <!--Search&nbsp;-->\r\n                    <!--</label>-->\r\n                    <!--<span class=\"restrict-dropdown-menu\">-->\r\n                        <!--<input type=\"text\" placeholder=\"ex: Brent Crude, CDS...\" class=\"form-control\"-->\r\n                                   <!--ng-model=\"selected\"-->\r\n                                   <!--typeahead=\"attr.label for attr in marketIndexTypeahead({userInput: $viewValue}) | filter:$viewValue:$emptyOrMatch | orderBy:\'label.toString()\'\"-->\r\n                                   <!--typeahead-on-select=\"apiHandle.api.addMarketIndicator($item); selected = \'\';showIndicatorControl = false;\"-->\r\n                                   <!--typeahead-focus/>-->\r\n                    <!--</span>-->\r\n                    <!--<a class=\"clickable\" ng-if=\"showMoreMarketInfo\" ng-click=\"moreMarketInfoCallback()\">Show All</a>-->\r\n                <!--</div>-->\r\n            <!--</span>-->\r\n            <!--<span dsc-click-outside dsc-open-state=\"states.menuDisplays.benchmarkControl\"-->\r\n                  <!--dsc-close-callback=\"toggleSlide(!states.menuDisplays.benchmarkControl, \'benchmark-control\')\"-->\r\n                    <!--style=\"padding-right:10px\" ng-init=\"customBenchmark = {}\">-->\r\n                <!--<a class=\"clickable\" style=\"padding-left:5px;text-decoration:none;\"-->\r\n                   <!--ng-click=\"toggleSlide(!states.menuDisplays.benchmarkControl, \'benchmark-control\');customBenchmark = {};\">-->\r\n                    <!--<span class=\"fake-anchor-tag\">Benchmark</span>-->\r\n                    <!--<i class=\"fa\" ng-class=\"{\'fa-chevron-up\': states.menuDisplays.benchmarkControl, \'fa-chevron-down\': !states.menuDisplays.benchmarkControl}\"></i>-->\r\n                <!--</a>-->\r\n                <!--<div class=\"benchmark-control floating-form\" style=\"display: none;right:0;width:220px\">-->\r\n                    <!--<alert ng-show=\"alerts.customBenchmark.active\" close=\"alerts.customBenchmark.active = false\" type=\"danger\" style=\"font-size: 12px;\">-->\r\n                        <!--There were problems with your input-->\r\n                        <!--<br/><br/>-->\r\n                        <!--<ul style=\"list-style:inside;padding-left:0;\">-->\r\n                            <!--<li ng-repeat=\"message in alerts.customBenchmark.messages\">{{message}}</li>-->\r\n                        <!--</ul>-->\r\n                    <!--</alert>-->\r\n                    <!--<label>-->\r\n                        <!--Sector&nbsp;-->\r\n                        <!--<span class=\"restrict-dropdown-menu-small\">-->\r\n                            <!--<input type=\"text\" class=\"form-control length-md\"-->\r\n                                   <!--ng-model=\"customBenchmark.sector\"-->\r\n                                   <!--typeahead=\"sector for sector in customBenchmarkOptions.sectors | filter:$viewValue:$emptyOrMatch | orderBy:\'toString()\'\"-->\r\n                                   <!--typeahead-focus-->\r\n                                   <!--typeahead-select-on-blur=\"true\"/>-->\r\n                        <!--</span>-->\r\n                    <!--</label>-->\r\n                    <!--<label>-->\r\n                        <!--Rating&nbsp;-->\r\n                        <!--<span class=\"restrict-dropdown-menu-small\">-->\r\n                            <!--<input type=\"text\" class=\"form-control length-md\"-->\r\n                                   <!--ng-model=\"customBenchmark.rating\"-->\r\n                                   <!--typeahead=\"rating for rating in customBenchmarkOptions.ratings | filter:$viewValue:$emptyOrMatch | orderBy:\'toString()\'\"-->\r\n                                   <!--typeahead-focus-->\r\n                                   <!--typeahead-select-on-blur=\"true\"/>-->\r\n                        <!--</span>-->\r\n                    <!--</label>-->\r\n                    <!--<label>-->\r\n                        <!--WAL&nbsp;-->\r\n                        <!--<span class=\"restrict-dropdown-menu-small\">-->\r\n                            <!--<input type=\"text\" class=\"form-control length-md\"-->\r\n                                   <!--ng-model=\"customBenchmark.wal\"-->\r\n                                   <!--typeahead=\"wal for wal in customBenchmarkOptions.wal | filter:$viewValue:$emptyOrMatch | orderBy:sortWalBuckets\"-->\r\n                                   <!--typeahead-focus-->\r\n                                   <!--typeahead-select-on-blur=\"true\"/>-->\r\n                        <!--</span>-->\r\n                    <!--</label>-->\r\n                    <!--<label>-->\r\n                        <!--Analytic&nbsp;-->\r\n                        <!--<span class=\"restrict-dropdown-menu-small\">-->\r\n                            <!--<input type=\"text\" class=\"form-control length-md\"-->\r\n                                   <!--ng-model=\"customBenchmark.analytic\"-->\r\n                                   <!--typeahead=\"attr as attr.label for attr in customBenchmarkOptions.analytics | filter:$viewValue:$emptyOrMatch | orderBy:\'label.toString()\'\"-->\r\n                                   <!--typeahead-focus-->\r\n                                   <!--typeahead-select-on-blur=\"true\"/>-->\r\n                        <!--</span>-->\r\n                    <!--</label>-->\r\n                    <!--<label>-->\r\n                        <!--Currency&nbsp;-->\r\n                        <!--<span class=\"restrict-dropdown-menu-small\">-->\r\n                            <!--<input type=\"text\" class=\"form-control length-md\" ng-disabled=\"true\" value=\"USD\"/>-->\r\n                        <!--</span>-->\r\n                    <!--</label>-->\r\n                    <!--<br/>-->\r\n                    <!--<button class=\"btn btn-success\" ng-click=\"apiHandle.api.addCustomBenchmark(customBenchmark)\"><i-->\r\n                            <!--class=\"fa fa-play\"></i></button>-->\r\n                <!--</div>-->\r\n            <!--</span>-->\r\n            <span>\r\n                <span class=\"clickable\" style=\"padding-right:5px;color:#005da0;\" ng-click=\"exportXLS()\" title=\"Excel\"><i class=\"fa fa-file-excel-o\"></i></span>\r\n                <span class=\"clickable\" style=\"padding-right:5px;color:#005da0;\" ng-click=\"exportPDF()\" title=\"PDF\"><i class=\"fa fa-file-pdf-o\"></i></span>\r\n                <span class=\"clickable\" style=\"padding-right:5px;color:#005da0;\" ng-repeat=\"customButton in customButtons\" ng-click=\"customButton.callback()\">\r\n                    <i class=\"fa\" ng-class=\"customButton.faClass\"></i>\r\n                </span>\r\n            </span>\r\n        </span>\r\n    </div>\r\n    <hr/>\r\n    <div class=\"chart-area-container\">\r\n        <i ng-show=\"isProcessing\" class=\"fa fa-spinner fa-spin fa-3x spinner\" style=\"position:absolute;top:0;left:0\"></i>\r\n        <!-- this is where the stock chart goes -->\r\n        <div ng-attr-id=\"{{\'enriched-highstock-\'+id}}\" style=\"width:100%;height:100%;\"></div>\r\n        <alert ng-show=\"alerts.generalWarning.active\" style=\"position:absolute;bottom:0;right:0;\"\r\n               close=\"alerts.generalWarning.active = false\" type=\"danger\">\r\n            {{alerts.generalWarning.message}}\r\n        </alert>\r\n    </div>\r\n</div>\r\n");}]);

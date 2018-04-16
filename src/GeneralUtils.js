@@ -15,6 +15,10 @@
     root.dsc.resolvePreferredYAxis = function (chart, seriesOption) {
         if (!seriesOption.axisType)
             return chart.yAxis.length === 0 ? -1 : 0;
+        //TODO: this is too hacky. Make this generic.
+        if(seriesOption.axisType === "Index Level"){
+            return -1;
+        }
         return _.findIndex(chart.yAxis, function (axis) {
             return _.reduce(axis.series, function(sum, ser){
                 return sum && ser.options.axisType === seriesOption.axisType;
@@ -31,19 +35,36 @@
      * @param name the name of the axis
      * @param scope the scope object (we need this for the axis click event handler)
      * @param axisType a member of the axisType enum
+     * @param tag colTag to get the numToRating map
      * @return {string}
      */
-    root.dsc.addAxisToChart = function (chart, name, scope, axisType) {
+    root.dsc.addAxisToChart = function (chart, name, scope, axisType, tag) {
+        var tag = tag || null;
         const axisId = _.uniqueId("yAxis");
         chart.addAxis({
+            labels: {
+                formatter: function () {
+                    if(scope.defaultSecurityAttribute.numToRating && scope.defaultSecurityAttribute.numToRating[tag] &&
+                        scope.defaultSecurityAttribute.numToRating[tag][this.value] !== null &&
+                        scope.defaultSecurityAttribute.numToRating[tag][this.value] !== undefined)
+                        return scope.defaultSecurityAttribute.numToRating[tag][this.value];
+                    else if(scope.defaultSecurityAttribute.numToRating && scope.defaultSecurityAttribute.numToRating[tag])
+                        return null;
+                    return this.value;
+                }
+            },
             title: {
-                text: name,
+                text: axisType,
                 events: {
                     click: function (event) {
                         dsc.onAxisClick.call(this, event, scope);
                     }
                 }
             },
+            floor: scope.defaultSecurityAttribute.yAxis ? scope.defaultSecurityAttribute.yAxis.floor : undefined,
+            ceiling: scope.defaultSecurityAttribute.yAxis ? scope.defaultSecurityAttribute.yAxis.ceiling : undefined,
+            startOnTick: scope.defaultSecurityAttribute.yAxis ? false : true,
+            endOnTick: scope.defaultSecurityAttribute.yAxis ? false : true,
             axisType: axisType,
             opposite: chart.options.yAxis.length % 2 == 1,      //check for only the yAxis. xAxis is always datetime.
             id: axisId
@@ -132,6 +153,7 @@
      */
     root.dsc.showCtxMenu = function ($ctxMenu, event) {
         $ctxMenu.show();
+        //Comment out the following line when MenuBuilder - triggerSeriesContextMenu is changed.
         const $rootDiv = $('div.root');
 
         const ctnRight = $rootDiv.position().left + $rootDiv.width();
@@ -255,13 +277,15 @@
 
         const chart = scope.states.chart;
         const series = chart.get(id);
-        const yAxis = series.yAxis;
-        const securityId = series.options.securityId;
+        if(series){
+            const yAxis = series.yAxis;
+            const securityId = series.options.securityId;
 
-        if (angular.isFunction(series.remove))
-            series.remove();
+            if (angular.isFunction(series.remove))
+                series.remove();
 
-        dsc.afterSeriesRemove(yAxis, securityId, scope);
+            dsc.afterSeriesRemove(yAxis, securityId, scope);
+        }
     };
 
 
@@ -278,6 +302,7 @@
                 nums.splice(0, 1);  // remove the first element of the array
             var sum = 0;
             for (var i in nums)
+                if(!isNaN(i))     //This checks if i gets value fastloopAsc and fastloop; filters
                 sum += nums[i];
             var n = period;
             if (nums.length < period)

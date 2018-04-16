@@ -37,9 +37,16 @@ angular.module('Example', ['decorated-stock-chart']).controller("MainCtrl", func
         label: "Price"
     }, {tag: "volume", label: "Volume"}, {tag: "cum_return", label: "Cum Return"}];
     $scope.onAttributeSelect = function (attr, security, options) {
+        $scope.customBenchmark = {
+            sector: "Sector A",
+            rating: "A",
+            wal: "All",
+            analytic: {tag: "price", label: "Price"}
+        };
         return {
             name: security.label + " " + attr.label,
-            data: simulate(domain(options), attr, security)
+            data: simulate(domain(options), attr, security),
+            showInNavigator: true
         };
     };
 
@@ -62,6 +69,17 @@ angular.module('Example', ['decorated-stock-chart']).controller("MainCtrl", func
         return {
             name: attr.label,
             data: simulate(domain(options), attr, {mean: 0.07, stddev: 0.13, initPrice: 100}, true)
+        };
+    };
+
+    $scope.clientBenchmarkTypeahead = function (userInput) {
+       return [{indexTicker: "SnP500", fullName: 'Standard and Poor'},{indexTicker: "F_CDS"},{indexTicker: "E_CDS"}];
+    };
+
+    $scope.onClientBenchmarkSelect = function (index, options,tag) {
+        return {
+            name: index.indexTicker,
+            data: simulate(domain(options), index, {mean: 0.08, stddev: 0.13, initPrice: 100}, true)
         };
     };
 

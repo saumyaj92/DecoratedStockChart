@@ -90,6 +90,9 @@
                      * 'options'
                      */
                     onCustomBenchmarkSelect: "&",
+                    customBenchmark: "=",
+                    clientBenchmarkTypeahead: "&",
+                    onClientBenchmarkSelect: "&",
                     cdxIndexOptions: "=",
                     onCdxIndexSelect: "&",
                     /**
@@ -104,13 +107,15 @@
                     onDateChange: "&",
                     showMarketIndicators: '=?',
                     showBenchmark: '=?',
-                    showCdxIndex: '=?'
+                    showClientBenchmark: '=?',
+                    showCdxIndex: '='
                 },
                 link: function (scope, elem, attrs) {
 
                     scope.id = _.uniqueId();
                     scope.alerts = {
                         customBenchmark: {active: false, messages: []},
+                        clientBenchmark: {active: false, messages: []},
                         generalWarning: {active: false, message: ""},
                         dateChangeError: {active: false, message: ""},
                         cdxIndex: {active: false, messages: []}
@@ -140,10 +145,12 @@
                         },
                         marketIndices: [],
                         customBenchmarks: [],
+                        clientBenchmark: [],
                         cdxIndex: [],
                         menuDisplays: {
                             securityControl: false,
                             benchmarkControl: false,
+                            clientBenchmarkControl: false,
                             indicatorControl: false,
                             cdxControl: false,
                             comparisonControl: false,
@@ -160,6 +167,44 @@
                      * define the API exposed to the parent component
                      */
                     scope.apiHandle.api = {
+                        clearCurveStates: function(){
+                            if(!_.isEmpty(scope.states.clientBenchmark)){
+                                _.each(scope.states.clientBenchmark, function(clientBenchmark){
+                                    var id = ['ClientBenchmark',clientBenchmark.indexTicker].join(".");
+                                    dsc.removeSeriesById(id, scope);
+                                });
+                                scope.states.clientBenchmark = [];
+                            }
+                            if(!_.isEmpty(scope.states.customBenchmarks)){
+                                _.each(scope.states.customBenchmarks, function(customBenchmark){
+                                    var id = ['CustomBenchmark',
+                                        customBenchmark.sector,
+                                        customBenchmark.rating,
+                                        customBenchmark.wal,
+                                        customBenchmark.analytic.tag].join(".");
+                                    dsc.removeSeriesById(id, scope);
+                                });
+                                scope.states.customBenchmarks = [];
+                            }
+                            if(!_.isEmpty(scope.states.cdxIndex)){
+                                _.each(scope.states.cdxIndex, function(cdxIndex){
+                                    var id = ['CdxIndex',
+                                        cdxIndex.contractType,
+                                        cdxIndex.contractTenor,
+                                        cdxIndex.otrFlag].join(".");
+                                    dsc.removeSeriesById(id, scope);
+                                });
+                                scope.states.cdxIndex = [];
+                            }
+                            if(!_.isEmpty(scope.states.marketIndices)){
+                                _.each(scope.states.marketIndices, function(marketIndex){
+                                    var id = marketIndex.tag;
+                                    dsc.removeSeriesById(id, scope);
+                                });
+                                scope.states.marketIndices = [];
+                            }
+
+                        },
                         /**
                          * add a security
                          * @param security
@@ -198,14 +243,24 @@
                             _.chain(scope.states.chart.series).filter(function (series) {
                                 return series && series.options.securityId == id;
                             }).each(function (series) {
-                                const yAxis = series.yAxis;
-                                series.remove();
-                                dsc.afterSeriesRemove(yAxis, id, scope);
+                                if(series.yAxis){
+                                    const yAxis = series.yAxis;
+                                    series.remove();
+                                    dsc.afterSeriesRemove(yAxis, id, scope);
+                                }
+
                             });
 
                             // fire callback if provided
                             if (_.isFunction(scope.onSecurityRemove))
                                 scope.onSecurityRemove({id: id});
+
+                            if(scope.states.securityAttrMap.length == 0){
+                                scope.states.chart.update({
+                                    navigator: {enabled: false}
+                                });
+                            }
+
                         },
                         addMarketIndicator: function ($item) {
                             scope.isProcessing = true;
@@ -217,7 +272,8 @@
                             });
 
                             function processSeries(series) {
-                                series.id = $item.tag;
+                                //Checking if tag exists for the item. If not, assume it's an id itself.
+                                series.id = $item.tag ? $item.tag : $item;
 
                                 /**
                                  * instruction on how to properly remove the series
@@ -264,11 +320,12 @@
                             }
 
                             function processSeries(series) {
-                                series.id = ['CustomBenchmark',
-                                    customBenchmark.sector,
-                                    customBenchmark.rating,
-                                    customBenchmark.wal,
-                                    customBenchmark.analytic.tag].join(".");
+                                if(series.data){
+                                    series.id = ['CustomBenchmark',
+                                        customBenchmark.sector,
+                                        customBenchmark.rating,
+                                        customBenchmark.wal,
+                                        customBenchmark.analytic.tag].join(".");
 
 
                                 /**
@@ -279,14 +336,15 @@
                                     dsc.removeSeriesById(series.id, scope);
                                 };
 
-                                // Update the data it if it already exists
-                                if (scope.states.chart.get(series.id))
-                                    scope.states.chart.get(series.id).setData(series.data);
-                                else
-                                    scope.addSeries(series);
-                                scope.isProcessing = false;
-                                if (scope.states.customBenchmarks.indexOf(customBenchmark) === -1)
-                                    scope.states.customBenchmarks.push(customBenchmark);
+                                    // Update the data it if it already exists
+                                    if (scope.states.chart.get(series.id))
+                                        scope.states.chart.get(series.id).setData(series.data);
+                                    else
+                                        scope.addSeries(series);
+                                    scope.isProcessing = false;
+                                    if (scope.states.customBenchmarks.indexOf(customBenchmark) === -1)
+                                        scope.states.customBenchmarks.push(customBenchmark);
+                                }
                             }
 
                             validate(customBenchmark, result);
@@ -298,6 +356,66 @@
                             else {
                                 scope.alerts.customBenchmark.active = false;
                                 scope.toggleSlide(false, 'benchmark-control')
+                            }
+
+                            scope.isProcessing = true;
+                            if (result && angular.isFunction(result.then))
+                                result.then(function (series) {
+                                    processSeries(series.status ? series.data : series);
+                                }, function () {
+                                    scope.isProcessing = false;
+                                });
+                            else
+                                processSeries(result);
+
+                            return true;
+                        },
+                        addClientBenchmark: function (clientBenchmark) {
+                            scope.alerts.clientBenchmark.messages = [];
+
+                            const result = scope.onClientBenchmarkSelect({
+                                clientBenchmark: clientBenchmark,
+                                options: {dateRange: scope.states.dateRange},
+                                tag: scope.defaultSecurityAttribute
+                            });
+
+                            function validate(clientBenchmark, result) {
+                                if (!clientBenchmark.indexTicker)
+                                    scope.alerts.clientBenchmark.messages = ["Input is missing!"];
+                                else if (result.errors)
+                                    scope.alerts.clientBenchmark.messages = result.errors;
+                            }
+
+                            function processSeries(series) {
+                                series.id = ['ClientBenchmark',clientBenchmark.indexTicker].join(".");
+
+                                /**
+                                 * instruction on how to properly remove the series
+                                 */
+                                series.onRemove = function () {
+                                    scope.states.clientBenchmark.splice(scope.states.clientBenchmark.indexOf(clientBenchmark), 1);
+                                    dsc.removeSeriesById(series.id, scope);
+                                };
+
+                                // Update the data it if it already exists
+                                if (scope.states.chart.get(series.id))
+                                    scope.states.chart.get(series.id).setData(series.data);
+                                else
+                                    scope.addSeries(series);
+                                scope.isProcessing = false;
+                                if (scope.states.clientBenchmark.indexOf(clientBenchmark) === -1)
+                                    scope.states.clientBenchmark.push(clientBenchmark);
+                            }
+
+                            validate(clientBenchmark, result);
+
+                            if (scope.alerts.clientBenchmark.messages.length > 0) {
+                                scope.alerts.clientBenchmark.active = true;
+                                return false;
+                            }
+                            else {
+                                scope.alerts.clientBenchmark.active = false;
+                                scope.toggleSlide(false, 'client-benchmark-control')
                             }
 
                             scope.isProcessing = true;
@@ -414,15 +532,33 @@
                             _.each(scope.states.customBenchmarks, scope.apiHandle.api.addCustomBenchmark);
                             //Update all cdx indices
                             _.each(scope.states.cdxIndex, scope.apiHandle.api.addCdxIndex);
+                            //Update all client benchmarks
+                            _.each(scope.states.clientBenchmark, scope.apiHandle.api.addClientBenchmark);
                             if (scope.states.menuDisplays.dateControl)
                                 scope.toggleSlide(!scope.states.menuDisplays.dateControl, 'date-control');
                             scope.states.menuDisplays.dateControl = false;
                         },
                         changeTitle: function(title){
-                            scope.states.chart.setTitle({text: title});
+                            if(scope.states && scope.states.chart){
+                                scope.states.chart.setTitle({text: title});
+                                if(scope.states.chart.yAxis.length > 0){
+                                    scope.states.chart.yAxis[0].update({
+                                        title: {
+                                            text: scope.defaultSecurityAttribute.unit
+                                        }
+                                    });
+                                }
+                            }
                         },
                         changeDefaultSecurityAttribute: function(newAttr){
                             scope.onDefaultAttributeChange({newAttr: newAttr});
+                            if(newAttr.tag.indexOf('rating') >= 0 && scope.states.chart.yAxis && scope.states.chart.yAxis.length > 0)
+                                scope.states.chart.yAxis[0].update({
+                                    floor: newAttr.yAxis ? newAttr.yAxis.floor : undefined,
+                                    ceiling: newAttr.yAxis ? newAttr.yAxis.ceiling : undefined,
+                                    startOnTick: false,
+                                    endOnTick: false
+                                }, true);
                         },
                         /**
                          * Sets size to be exactly the dimensions of the container
@@ -439,12 +575,15 @@
                             renderTo: "enriched-highstock-" + scope.id,
                             type: "spline",
                             marginTop: 30,
-                            zoomType: 'x',
+                            zoomType: 'none',
                             resetZoomButton: {
                                 theme: {
                                     display: 'none'
                                 }
                             }
+                        },
+                        navigator: {
+                            enabled: true
                         },
                         title: {
                             text: scope.title || "Untitled",
@@ -475,36 +614,53 @@
                             shared: true
                         },
                         xAxis: {
-                            type: "datetime",
-                            events: {
-                                // If we zoom in on the chart, change the date range to those dates
-                                afterSetExtremes: function (event) {
-                                    if (this.getExtremes().dataMin < event.min || this.getExtremes().dataMax > event.max) {
-                                        scope.apiHandle.api.changeDateRange(event.min, event.max);
-                                        this.chart.zoomOut();
-                                        // Since this is unrelated to angular, we need run a digest to apply bindings
-                                        scope.$apply(function(){
-                                            scope.states.selectedTimePeriod = null;
-                                        });
-                                    }
-                                }
-                            }
+                            type: "datetime"
+                            // events: {
+                            //     // If we zoom in on the chart, change the date range to those dates
+                            //     afterSetExtremes: function (event) {
+                            //         if (this.getExtremes().dataMin < event.min || this.getExtremes().dataMax > event.max) {
+                            //             scope.apiHandle.api.changeDateRange(event.min, event.max);
+                            //             this.chart.zoomOut();
+                            //             // Since this is unrelated to angular, we need run a digest to apply bindings
+                            //             scope.$apply(function(){
+                            //              scope.states.selectedTimePeriod = null;
+                            //             });
+                            //         }
+                            //     }
+                            // }
                         },
                         yAxis: {
+                            labels: {
+                                formatter: function () {
+                                    if(scope.defaultSecurityAttribute.numToRating &&
+                                        scope.defaultSecurityAttribute.numToRating[scope.defaultSecurityAttribute.tag] &&
+                                        scope.defaultSecurityAttribute.numToRating[scope.defaultSecurityAttribute.tag][this.value] !== null &&
+                                        scope.defaultSecurityAttribute.numToRating[scope.defaultSecurityAttribute.tag][this.value] !== undefined)
+                                        return scope.defaultSecurityAttribute.numToRating[scope.defaultSecurityAttribute.tag][this.value];
+                                    else if(scope.defaultSecurityAttribute.numToRating &&
+                                        scope.defaultSecurityAttribute.numToRating[scope.defaultSecurityAttribute.tag])
+                                        return null;
+                                    return this.value;
+                                }
+                            },
                             title: {
-                                text: scope.defaultSecurityAttribute.label,
+                                text: scope.defaultSecurityAttribute.unit || scope.defaultSecurityAttribute.label,
                                 events: {
                                     click: function (event) {
                                         dsc.onAxisClick.call(this, event, scope);
                                     }
                                 }
                             },
-                            axisType: scope.defaultSecurityAttribute.label,
+                            axisType: scope.defaultSecurityAttribute.unit || scope.defaultSecurityAttribute.label,
                             id: _.uniqueId("yAxis")
                         },
                         legend: {
                             useHTML: true
                         },
+                        floor: scope.defaultSecurityAttribute.yAxis ? scope.defaultSecurityAttribute.yAxis.floor : undefined,
+                        ceiling: scope.defaultSecurityAttribute.yAxis ? scope.defaultSecurityAttribute.yAxis.ceiling : undefined,
+                        startOnTick: scope.defaultSecurityAttribute.yAxis ? false : true,
+                        endOnTick: scope.defaultSecurityAttribute.yAxis ? false : true,
                         series: [],
                         credits: {enabled: false}
                     }, scope.highstockOptions);
@@ -526,6 +682,9 @@
                                 name: origSeries.name + " " + numDays + " Day SMA",
                                 axisType: origSeries.options.axisType,
                                 data: xy,
+                                color: origSeries.color,
+                                type: 'line',
+                                dashStyle: 'dash',
                                 securityId: origSeries.options.securityId || null
                             };
                         },
@@ -547,7 +706,8 @@
                                 axisType: origSeries.options.axisType + " Basis",
                                 securityId: origSeries.options.securityId || null,
                                 data: data,
-                                type: 'areaspline'
+                                type: 'areaspline',
+                                color: origSeries.color
                             }
                         }
                     };
@@ -581,7 +741,13 @@
                         function processSeries(series) {
                             series.securityId = securityAttrPair[0].id;
                             series.id = dsc.generateSeriesID(securityAttrPair[0], $item);
+                            var chosenSecurityAttrPair = _.filter(securityAttrPair[1], function(security){
+                                if(security.unit === series.axisType){return security}});
+                            if(chosenSecurityAttrPair.length > 0 && chosenSecurityAttrPair[0].numToRating!==undefined){
+                                series.numToRating = chosenSecurityAttrPair[0].numToRating;
+                            }
                             series.axisType = $item.unit || $item.label;
+                            series.tag = $item.tag;
                             series.onRemove = function () {
                                 scope.removeAttr($item, securityAttrPair);
                             };
@@ -710,13 +876,14 @@
                             /**
                              * add a new axis if we cannot find a preferred series
                              */
-                            dsc.addAxisToChart(chart, seriesOption.axisType || seriesOption.name, scope, seriesOption.axisType, seriesOption.subType);
+                            dsc.addAxisToChart(chart, seriesOption.axisType || seriesOption.name, scope, seriesOption.axisType, seriesOption.tag);
                             seriesOption.yAxis = chart.yAxis.length - 1;
                         }
                         else
                             seriesOption.yAxis = preferredYAxis;
 
                         chart.addSeries(seriesOption);
+                        chart.update({navigator: {enabled: true}});
                         dsc.attachLegendEventHandlers(chart.get(seriesOption.id), scope);
                     };
 
@@ -762,17 +929,32 @@
                         if (window.navigator.msSaveBlob)
                             window.navigator.msSaveBlob(new Blob([html]), "time-series-export.xls");
                         else
-                            window.open('data:application/vnd.ms-excel,' + encodeURIComponent(html));
+                            // window.open('data:application/vnd.ms-excel,' + encodeURIComponent(html));
+                            saveAs(new Blob([html],{type: 'data:application/vnd.ms-excel;charset=utf-8'}),'time-series-export.xls');
                     };
 
                     /**
                      * Export the image of the chart to a PDF
                      */
                     scope.exportPDF = function(){
-                        scope.states.chart.exportChart({
+                        var svg = scope.states.chart.getSVGForExport({
                             type: 'application/pdf',
                             filename: 'ts-chart-export'
                         });
+                        var canvas = document.createElement('canvas');
+                        canvg(canvas, svg);
+                        var imgData = canvas.toDataURL('image/jpeg');
+                        var doc = new jsPDF('l', 'pt', 'letter');
+                        var width = doc.internal.pageSize.width;
+                        var height = doc.internal.pageSize.height;
+                        doc.addImage(imgData,'JPEG',0,0,width,height);
+                        doc.output('save','ts-chart-export.pdf');
+
+                        // scope.states.chart.exportChart({
+                        //     type: 'application/pdf',
+                        //     filename: 'ts-chart-export'
+                        // });
+
                     };
 
                     /**

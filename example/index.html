@@ -30,7 +30,8 @@
                     more-market-info-callback="moreMarketInfoCallback()"
                     show-market-indicators="true"
                     show-benchmark="true"
-                    show-cdx-index="true"
+                    show-client-benchmark="true"
+                    show-cdx-index="false"
                     custom-buttons="customButtons"
                     on-date-change="datesChanged(startDate,endDate)"
                     highstock-options="highstockOptions"
@@ -43,6 +44,10 @@
 
                     custom-benchmark-options="customBenchmarkOptions"
                     on-custom-benchmark-select="onCustomBenchmarkSelect(customBenchmark, options)"
+                    custom-benchmark = "customBenchmark"
+
+                    client-benchmark-typeahead="clientBenchmarkTypeahead(userInput)"
+                    on-client-benchmark-select="onClientBenchmarkSelect(clientBenchmark, options, tag)"
 
                     cdx-index-options="cdxIndexOptions"
                     on-cdx-index-select="onCdxIndexSelect(cdxIndex, options, tag)"
@@ -72,13 +77,17 @@
 </div>
 <br/><br/><br/><br/>
 <script src="../bower_components/jquery/dist/jquery.min.js"></script>
+<script src="../bower_components/jspdf/dist/jspdf.debug.js"></script>
+<script src="../bower_components/canvg/rgbcolor.js"></script>
+<script src="../bower_components/canvg/StackBlur.js"></script>
+<script src="../bower_components/canvg/canvg.js"></script>
 <script src="../bower_components/underscore/underscore.js"></script>
 <script src="../bower_components/moment/moment.js"></script>
 <script src="../bower_components/angular/angular.js"></script>
 <script src="../bower_components/angular-bootstrap/ui-bootstrap-tpls.js"></script>
 <script src="../bower_components/typeahead-focus/typeahead-focus.js"></script>
-<script src="../bower_components/highstock-release/highstock-all.js"></script>
-<script src="../bower_components/Custom-Events/customEvents.js"></script>
+<script src="../bower_components/highstock-release/highstock.js"></script>
+<script src="../bower_components/Custom-Events/js/customEvents.js"></script>
 <!-- Component src JS -->
 <script src="../src/Export.js"></script>
 <script src="../src/GeneralUtils.js"></script>
